@@ -43,7 +43,13 @@ const URL_EXPIRATION_SECONDS = 300
 
 // Main Lambda entry point
 export const handler = async event => {
-  return await getUploadURL(event)
+  return getUploadURL(event).catch(error => {
+    console.error('Error:', error)
+    return {
+      status: 500,
+      body: JSON.stringify({ message: 'Internal Server Error' })
+    }
+  })
 }
 
 const getUploadURL = async function (event) {
@@ -65,16 +71,14 @@ const getUploadURL = async function (event) {
       Key: s3Params.Key
     })
   } else if (type === 'meta') {
-    await metaUploadParams(searchParams, event)
+    return await metaUploadParams(searchParams, event)
   } else {
     throw new Error('Unsupported upload type: ' + type)
   }
-
-  console.log('Params: ', s3Params)
 }
 
 async function metaUploadParams(searchParams, event) {
-  const { branch, name, type } = event.queryStringParameters
+  const name = searchParams.get('name')
   const httpMethod = event.requestContext.httpMethod
   if (httpMethod == 'PUT') {
     const requestBody = JSON.parse(event.body)
@@ -85,39 +89,30 @@ async function metaUploadParams(searchParams, event) {
       }
 
       //name is the partition key and cid is the sort key for the DynamoDB table
-      try {
-        await dynamo.send(
-          new PutCommand({
-            TableName: tableName,
-            Item: {
-              name: name,
-              cid: cid,
-              data: data
-            }
-          })
-        )
-        for (const p of parents) {
-          await dynamo.send(
-            new DeleteCommand({
-              TableName: tableName,
-              Key: {
-                name: name,
-                cid: p
-              }
-            })
-          )
+      const putCommandParams = {
+        TableName: tableName,
+        Item: {
+          name: name,
+          cid: cid,
+          data: data
         }
+      }
+      await dynamo.send(new PutCommand(putCommandParams))
 
-        return {
-          status: 201,
-          body: JSON.stringify({ message: 'Metadata has been added' })
+      for (const p of parents) {
+        const deleteCommandParams = {
+          TableName: tableName,
+          Key: {
+            name: name,
+            cid: p
+          }
         }
-      } catch (error) {
-        console.error('Error inserting items:', error)
-        return {
-          status: 500,
-          body: JSON.stringify({ message: 'Internal Server Error' })
-        }
+        await dynamo.send(new DeleteCommand(deleteCommandParams))
+      }
+
+      return {
+        status: 201,
+        body: JSON.stringify({ message: 'Metadata has been added' })
       }
     } else {
       return {
@@ -140,32 +135,20 @@ async function metaUploadParams(searchParams, event) {
       ProjectionExpression: 'cid, #dataAttr',
       TableName: tableName
     }
-
-    try {
-      const command = new QueryCommand(input)
-      const data = await dynamo.send(command)
-      let items = []
-      console.log('This is the name', name)
-      console.log('This is the returned data', data)
-      // const data = await dynamoDB.scan(params).promise();
-      if (data.Items && data.Items.length > 0) {
-        items = data.Items.map(item => AWS.DynamoDB.Converter.unmarshall(item))
-        console.log('Payload metadata items are:', items)
-        return {
-          status: 200,
-          body: JSON.stringify({ items })
-        }
-      } else {
-        return {
-          status: 404,
-          body: JSON.stringify({ message: 'No items found' })
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching items:', error)
+    const command = new QueryCommand(input)
+    const data = await dynamo.send(command)
+    // const data = await dynamoDB.scan(params).promise();
+    let items = []
+    if (data.Items && data.Items.length > 0) {
+      items = data.Items.map(item => AWS.DynamoDB.Converter.unmarshall(item))
       return {
-        status: 500,
-        body: JSON.stringify({ message: 'Internal Server Error' })
+        status: 200,
+        body: JSON.stringify({ items })
+      }
+    } else {
+      return {
+        status: 200,
+        body: JSON.stringify({ items : [] })
       }
     }
   } else {
