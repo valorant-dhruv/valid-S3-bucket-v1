@@ -89,25 +89,23 @@ async function metaUploadParams(searchParams, event) {
       }
 
       //name is the partition key and cid is the sort key for the DynamoDB table
-      const putCommandParams = {
+      await dynamo.send(new PutCommand({
         TableName: tableName,
         Item: {
           name: name,
           cid: cid,
           data: data
         }
-      }
-      await dynamo.send(new PutCommand(putCommandParams))
+      }))
 
       for (const p of parents) {
-        const deleteCommandParams = {
+        await dynamo.send(new DeleteCommand({
           TableName: tableName,
           Key: {
             name: name,
             cid: p
           }
-        }
-        await dynamo.send(new DeleteCommand(deleteCommandParams))
+        }))
       }
 
       return {
@@ -121,7 +119,7 @@ async function metaUploadParams(searchParams, event) {
       }
     }
   } else if (httpMethod === 'GET') {
-    const input = {
+    const command = new QueryCommand({
       ExpressionAttributeValues: {
         ':v1': {
           S: name
@@ -134,8 +132,7 @@ async function metaUploadParams(searchParams, event) {
       KeyConditionExpression: '#nameAttr = :v1',
       ProjectionExpression: 'cid, #dataAttr',
       TableName: tableName
-    }
-    const command = new QueryCommand(input)
+    })
     const data = await dynamo.send(command)
     // const data = await dynamoDB.scan(params).promise();
     let items = []
