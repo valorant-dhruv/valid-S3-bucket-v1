@@ -15,11 +15,9 @@
 */
 
 'use strict'
-console.log('Loading function')
 import AWS from 'aws-sdk'
 import { CID } from 'multiformats'
 import { base64pad } from 'multiformats/bases/base64'
-console.log('config aws')
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb'
 import {
   DynamoDBDocumentClient,
@@ -28,6 +26,7 @@ import {
   GetCommand,
   DeleteCommand
 } from '@aws-sdk/lib-dynamodb'
+import 'dotenv/config'
 
 // @ts-ignore
 // AWS.config.update({region: 'us-east-1'})
@@ -43,19 +42,19 @@ const URL_EXPIRATION_SECONDS = 300
 
 // Main Lambda entry point
 export const handler = async event => {
-  return getUploadURL(event).catch(error => {
+  return await getUploadURL(event).catch(error => {
     console.error('Error:', error)
     return {
       status: 500,
-      body: JSON.stringify({ message: 'Internal Server Error' })
+      body: JSON.stringify({ message: 'Internal Server Error',error:error.message })
     }
   })
 }
 
 const getUploadURL = async function (event) {
-  const { searchParams } = new URL(`http://localhost/?${event.rawQueryString}`)
-  const type = searchParams.get('type')
-  const name = searchParams.get('name')
+  const {queryStringParameters}=event;
+  const type = queryStringParameters.type;
+  const name = queryStringParameters.name;
   if (!type || !name) {
     throw new Error('Missing name or type query parameter: ' + event.rawQueryString)
   }
@@ -63,7 +62,7 @@ const getUploadURL = async function (event) {
   let s3Params
 
   if (type === 'data' || type === 'file') {
-    s3Params = carUploadParams(searchParams, event, type)
+    s3Params = carUploadParams(queryStringParameters, event, type)
     const uploadURL = await s3.getSignedUrlPromise('putObject', s3Params)
 
     return JSON.stringify({
@@ -71,15 +70,15 @@ const getUploadURL = async function (event) {
       Key: s3Params.Key
     })
   } else if (type === 'meta') {
-    return await metaUploadParams(searchParams, event)
+    return await metaUploadParams(queryStringParameters, event)
   } else {
     throw new Error('Unsupported upload type: ' + type)
   }
 }
 
-async function metaUploadParams(searchParams, event) {
-  const name = searchParams.get('name')
-  const httpMethod = event.requestContext.httpMethod
+async function metaUploadParams(queryStringParameters, event) {
+  const name = queryStringParameters.name;
+  const httpMethod = event.httpMethod
   if (httpMethod == 'PUT') {
     const requestBody = JSON.parse(event.body)
     if (requestBody) {
@@ -135,6 +134,8 @@ async function metaUploadParams(searchParams, event) {
     })
     const data = await dynamo.send(command)
     // const data = await dynamoDB.scan(params).promise();
+    //This means items is an array of objects where each object contains a string key and a value of any type
+    //: { [key: string]: any; }[]
     let items = []
     if (data.Items && data.Items.length > 0) {
       items = data.Items.map(item => AWS.DynamoDB.Converter.unmarshall(item))
@@ -156,9 +157,9 @@ async function metaUploadParams(searchParams, event) {
   }
 }
 
-function carUploadParams(searchParams, event, type: 'data' | 'file') {
-  const name = searchParams.get('name')
-  const carCid = searchParams.get('car')
+function carUploadParams(queryStringParameters, event, type) {
+  const name = queryStringParameters.name
+  const carCid = queryStringParameters.car
   if (!carCid || !name) {
     throw new Error('Missing name or car query parameter: ' + event.rawQueryString)
   }
